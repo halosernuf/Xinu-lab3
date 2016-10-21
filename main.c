@@ -154,7 +154,6 @@ syscall publish(topic16 topic, uint32 data){
 	// struct subs* subentry;
 	struct brlst* brentry;
 	mask=disable();
-	printf("publish %d with data %d \n", topic,data);
 	/* return if wrong topic id*/
 	if(topic<0 || topic>=NTP){
 		restore(mask);
@@ -200,37 +199,33 @@ syscall unsubscribeAll(){
 
 process A(){
 	printf("process A start\n");
-	if(subscribe(1,&handler1)==SYSERR){
+	topic16 topic;
+	if(subscribe(10,&handler1)==SYSERR){
 		printf("fail to subscribe\n");
 	}else{
-		printf("process %d subscribe to %d with handler1\n",currpid,1);
+		printf("process A subscribe to %d with handler1\n",topic);
 	}
-	if(subscribe(2,&handler2)==SYSERR){
-		printf("fail to subscribe\n");
-	}else{
-		printf("process %d subscribe to %d with handler2\n",currpid,2);
-	}
-	if(subscribe(30,&handler1)==SYSERR){
-		printf("fail to subscribe\n");
-	}else{
-		printf("process %d subscribe to %d with handler1\n",currpid,30);
-	}
-	sleep(1);
-		// publish(2,1);
-	// printf("finish publish\n");
-	// sleep(10);
-	// unsubscribeAll();
+	sleep(10);
+	unsubscribeAll();
 	return OK;
 }
 process B(){
 	printf("process B start\n");
-	sleep(5);
-	publish(1,100);
-	// sleep(10);
-	publish(2,200);
-	// sleep(10);
-	publish(30,300);
-	// sleep(10);
+	topic16 topic;
+	uint32 data;
+	sleep(1);
+	topic=10;
+	data=77;
+	publish(topic,data);
+	printf("Process B publishs %d to topic %d\n",topic,data);
+	topic=10;
+	data=42;
+	publish(topic,data);
+	printf("Process B publishs %d to topic %d\n",topic,data);
+	topic=7;
+	data=17;
+	publish(topic,data);
+	printf("Process B publishs %d to topic %d\n",topic,data);
 	printf("finish publish\n");
 	sleep(1);
 	// unsubscribeAll();
@@ -245,10 +240,7 @@ process Broker(){
 	printf("Broker start\n");
 	while(1){
 		wait(csm);
-		printf("broker loop\n");
 		if(brhead->next!=(struct brlst *)NULL){
-			printf("get broker list locker\n");
-			printf("broker run handler\n");
 			brentry=brhead->next;
 			wait(tbsem);
 			subsentry=topictab[brentry->topic].subsHead;
