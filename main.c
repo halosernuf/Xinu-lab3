@@ -26,14 +26,15 @@ sid32 tbsem;
 //broker publish list struct
 struct brlst
 {
-	void (*hdlptr)(topic16, uint32);
-	topic16 topic;
+	// void (*hdlptr)(topic16, uint32);
+	// topic16 topic;
 	uint32 data;
+	topic16 topic;
 	struct brlst* next;
 };
 struct brlst* brhead;
-struct brlst* brend;
-sid32 brsem;
+sid32 csm;
+sid32 prd;
 /*--------struct define end--------*/
 status init_topictab(){
 	int32 i;
@@ -47,8 +48,11 @@ status init_topictab(){
 
 status init_broker(){
 	brhead=(struct brlst *)getmem(sizeof(struct brlst));
-	brend = brhead;
-	brsem = semcreate(1);
+	brhead->next=(struct brlst*)NULL;
+	brhead->data=0;
+	brhead->topic=0;
+	if((prd=semcreate(1))==SYSERR) return SYSERR;
+	if((csm=semcreate(0))==SYSERR) return SYSERR;
 	return OK;
 }
 
@@ -142,11 +146,13 @@ syscall unsubscribe(topic16 topic){
 	restore(mask);
 	return OK;
 }
+//publish topic entry to broker
 syscall publish(topic16 topic, uint32 data){
 	
 	intmask mask;
-	struct tpc* tpcentry;
-	struct subs* subentry;
+	// struct tpc* tpcentry;
+	// struct subs* subentry;
+	struct brlst* brentry;
 	mask=disable();
 	printf("publish %d with data %d \n", topic,data);
 	/* return if wrong topic id*/
@@ -154,28 +160,24 @@ syscall publish(topic16 topic, uint32 data){
 		restore(mask);
 		return SYSERR;
 	}
-	tpcentry = &topictab[topic];
-	// wait(tpcentry->subsSem);
 	wait(tbsem);
-	subentry=tpcentry->subsHead;
-	while(subentry!=(struct subs*)NULL){
-		wait(brsem);
-		
-		printf("copy data to broker blk\n");
-		
-		struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
-		newBr->topic=topic;
-		newBr->hdlptr=subentry->hdlptr;
-		newBr->data=data;
-		newBr->next=brend->next;
-		brend->next=newBr;
-		brend=brend->next;
-		subentry=subentry->next;
-		signal(brsem);
+	wait(prd);
+	printf("copy data to broker blk\n");
+	struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
+	newBr->data=data;
+	newBr->topic=topic;
+	newBr->next=(struct brlst*)NULL;
+	brentry=brhead;
+	while(brentry->next!=(struct brlst*)NULL){
+		printf("brentry->next->topic %d \n", brentry->next->topic);
+		brentry=brentry->next;
 	}
-	// signal(tpcentry->subsSem);
+	brentry->next=newBr;
+	if(brhead->next!=(struct brlst*)NULL){
+		printf("brhead->next->topic %d \n", brhead->next->topic);
+	}
+	signal(csm);
 	signal(tbsem);
-
 	restore(mask);
 	return OK;
 }
@@ -213,33 +215,52 @@ process A(){
 	}else{
 		printf("process %d subscribe to %d with handler1\n",currpid,30);
 	}
-	sleep(40);
-	// publish(2,1);
+	sleep(1);
+		// publish(2,1);
 	// printf("finish publish\n");
 	// sleep(10);
-	unsubscribeAll();
+	// unsubscribeAll();
 	return OK;
 }
 process B(){
-	printf("process B start");
+	printf("process B start\n");
+	sleep(5);
 	publish(1,100);
+	// sleep(10);
 	publish(2,200);
+	// sleep(10);
 	publish(30,300);
+	// sleep(10);
 	printf("finish publish\n");
-	sleep(10);
-	unsubscribeAll();
+	sleep(1);
+	// unsubscribeAll();
 	return OK;
 }
+
+
+
 process Broker(){
 	struct brlst* brentry;
+	struct subs* subsentry;
 	printf("Broker start\n");
-	while(brhead->next!=(struct brlst *)NULL){
-			wait(brsem);
+	while(1){
+		wait(csm);
+		printf("broker loop\n");
+		if(brhead->next!=(struct brlst *)NULL){
+			printf("get broker list locker\n");
+			printf("broker run handler\n");
 			brentry=brhead->next;
-			brentry->hdlptr(brentry->topic,brentry->data);
+			wait(tbsem);
+			subsentry=topictab[brentry->topic].subsHead;
+			while(subsentry!=(struct subs *)NULL){
+				subsentry->hdlptr(brentry->topic,brentry->data);
+				subsentry=subsentry->next;
+			}
+			signal(tbsem);
 			brhead->next=brentry->next;
 			freemem(brentry,sizeof(struct brlst));
-			signal(brsem);
+		}
+		signal(prd);
 	}
 	return OK;
 }
@@ -252,10 +273,11 @@ process	main(void)
 		printf("fail to init topic table");
 		return SYSERR;
 	}
-	if(init_broker()!=OK){
+	if(init_broker()==SYSERR){
 		printf("fail to init broker list");
 		return SYSERR;
 	}
+	
 	resume(create(A, 4096, 50, "A", 0));
 	resume(create(B, 4096, 50, "B", 0));
 	resume(create(Broker,4096, 50, "Broker", 0));
