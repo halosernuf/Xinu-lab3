@@ -6,43 +6,49 @@
 #define MAXSUB 8
 #define MAXBLK 20
 #define NIL (struct subs* )0x00
+/*--------struct define start--------*/
+//topic table struct
 struct tpc
 {
 	struct subs* subsHead;
 	int32 subsCount;
 	// sid32 subsSem;
 };
+//topic subscriber list struct
 struct subs
 {
 	pid32 pid;
 	void (*hdlptr)(topic16, uint32);
 	struct subs* next;
 };
-
 struct tpc topictab[NTP];
 sid32 tbsem;
-
-struct brblk
+//broker publish list struct
+struct brlst
 {
 	void (*hdlptr)(topic16, uint32);
 	topic16 topic;
 	uint32 data;
+	struct brlst* next;
 };
-struct brblk br[MAXBLK];
-int32 head=0;
-int32 tail=0;
-sid32 prd;
-sid32 csm;
+struct brlst* brhead;
+struct brlst* brend;
+sid32 brsem;
+/*--------struct define end--------*/
 status init_topictab(){
 	int32 i;
 	for(i=0;i<NTP;i++){
 		topictab[i].subsCount=0;
 		topictab[i].subsHead=(struct subs *)NULL;
-		// if((topictab[i].subsSem=semcreate(1))==SYSERR){
-		// 	return SYSERR;
-		// };
 	}
 	if((tbsem=semcreate(1))==SYSERR) return SYSERR;
+	return OK;
+}
+
+status init_broker(){
+	brhead=(struct brlst *)getmem(sizeof(struct brlst));
+	brend = brhead;
+	brsem = semcreate(1);
 	return OK;
 }
 
@@ -137,12 +143,12 @@ syscall unsubscribe(topic16 topic){
 	return OK;
 }
 syscall publish(topic16 topic, uint32 data){
-	printf("publish %d with data %d \n", topic,data);
+	
 	intmask mask;
 	struct tpc* tpcentry;
 	struct subs* subentry;
-	struct brblk* brentry;
 	mask=disable();
+	printf("publish %d with data %d \n", topic,data);
 	/* return if wrong topic id*/
 	if(topic<0 || topic>=NTP){
 		restore(mask);
@@ -153,15 +159,19 @@ syscall publish(topic16 topic, uint32 data){
 	wait(tbsem);
 	subentry=tpcentry->subsHead;
 	while(subentry!=(struct subs*)NULL){
-		wait(prd);
+		wait(brsem);
+		
 		printf("copy data to broker blk\n");
-		brentry=&br[head];
-		brentry->topic=topic;
-		brentry->hdlptr=subentry->hdlptr;
-		brentry->data=data;
-		head=(head+1)%MAXBLK;
+		
+		struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
+		newBr->topic=topic;
+		newBr->hdlptr=subentry->hdlptr;
+		newBr->data=data;
+		newBr->next=brend->next;
+		brend->next=newBr;
+		brend=brend->next;
 		subentry=subentry->next;
-		signal(csm);
+		signal(brsem);
 	}
 	// signal(tpcentry->subsSem);
 	signal(tbsem);
@@ -187,7 +197,7 @@ syscall unsubscribeAll(){
 }
 
 process A(){
-	printf("process A start");
+	printf("process A start\n");
 	if(subscribe(1,&handler1)==SYSERR){
 		printf("fail to subscribe\n");
 	}else{
@@ -221,25 +231,29 @@ process B(){
 	return OK;
 }
 process Broker(){
-	struct brblk* brentry;
+	struct brlst* brentry;
 	printf("Broker start\n");
-	while(1){
-		wait(csm);
-		printf("run callback\n");
-		brentry=&br[tail];
-		brentry->hdlptr(brentry->topic,brentry->data);
-		tail=(tail+1)%MAXBLK;
-		signal(prd);
+	while(brhead->next!=(struct brlst *)NULL){
+			wait(brsem);
+			brentry=brhead->next;
+			brentry->hdlptr(brentry->topic,brentry->data);
+			brhead->next=brentry->next;
+			freemem(brentry,sizeof(struct brlst));
+			signal(brsem);
 	}
 	return OK;
 }
+
 process	main(void)
 {
 	recvclr();
-	prd=semcreate(MAXBLK);
-	csm=semcreate(0);
+	
 	if(init_topictab()==SYSERR){
-		printf("fail to init");
+		printf("fail to init topic table");
+		return SYSERR;
+	}
+	if(init_broker()!=OK){
+		printf("fail to init broker list");
 		return SYSERR;
 	}
 	resume(create(A, 4096, 50, "A", 0));

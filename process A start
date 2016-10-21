@@ -1,0 +1,14 @@
+process A start
+process 4 subscribe to 1 with handler1
+process 4 subscribe to 2 with handler2
+process 4 subscribe to 30 with handler1
+onocess B start
+publish 1 with data 100
+copy data to broker blk
+publish 2 with data 200 
+publish 30 with data 300
+- Function handler1() is called with arguments 1 and 100
+- Function handler2() is called with arguments 2 and 200
+copy data to broker blk
+finish publish
+
