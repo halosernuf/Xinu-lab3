@@ -4,8 +4,6 @@
 
 #define NTP 256
 #define MAXSUB 8
-#define MAXBLK 20
-#define NIL (struct subs* )0x00
 /*--------struct define start--------*/
 //topic table struct
 struct tpc
@@ -18,6 +16,7 @@ struct tpc
 struct subs
 {
 	pid32 pid;
+	topic16 group;
 	void (*hdlptr)(topic16, uint32);
 	struct subs* next;
 };
@@ -51,7 +50,7 @@ status init_broker(){
 	brhead->next=(struct brlst*)NULL;
 	brhead->data=0;
 	brhead->topic=0;
-	if((prd=semcreate(1))==SYSERR) return SYSERR;
+	if((prd=semcreate(MAXSUB))==SYSERR) return SYSERR;
 	if((csm=semcreate(0))==SYSERR) return SYSERR;
 	return OK;
 }
@@ -62,12 +61,12 @@ syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
 	struct subs* subentry;
 	mask=disable();
 	/* return if wrong topic id*/
-	if(topic<0 || topic>=NTP){
+	if(topic&0x00FF<0 || topic&0x00FF>=NTP){
 		restore(mask);
 		return SYSERR;
 	}
 	/* return if topic subscriber is over 8*/
-	tpcentry = &topictab[topic];
+	tpcentry = &topictab[topic&0x00FF];
 	// wait(tpcentry->subsSem);
 	wait(tbsem);
 	if(tpcentry->subsCount>=MAXSUB){
@@ -88,6 +87,7 @@ syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
 	newSub->pid=currpid;
 	newSub->hdlptr=handler;
 	newSub->next=subentry;
+	newSub->group=topic>>8;
 	tpcentry->subsHead=newSub;
 	// signal(tpcentry->subsSem);
 	signal(tbsem);
@@ -100,11 +100,11 @@ syscall unsubscribe(topic16 topic){
 	struct subs* subentry;
 	mask=disable();
 	/* return if wrong topic id*/
-	if(topic<0 || topic>=NTP){
+	if(topic&0x00ff<0 || topic&0x00ff>=NTP){
 		restore(mask);
 		return SYSERR;
 	}
-	tpcentry = &topictab[topic];
+	tpcentry = &topictab[topic&0x00ff];
 	// wait(tpcentry->subsSem);
 	wait(tbsem);
 	subentry=tpcentry->subsHead;
@@ -155,38 +155,36 @@ syscall publish(topic16 topic, uint32 data){
 	struct brlst* brentry;
 	mask=disable();
 	/* return if wrong topic id*/
-	if(topic<0 || topic>=NTP){
+	if(topic&0x00FF<0 || topic&0x00FF>=NTP){
 		restore(mask);
 		return SYSERR;
 	}
-	wait(tbsem);
+	
 	wait(prd);
-	printf("copy data to broker blk\n");
+	// printf("copy data to broker blk\n");
 	struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
 	newBr->data=data;
 	newBr->topic=topic;
 	newBr->next=(struct brlst*)NULL;
 	brentry=brhead;
 	while(brentry->next!=(struct brlst*)NULL){
-		printf("brentry->next->topic %d \n", brentry->next->topic);
 		brentry=brentry->next;
 	}
 	brentry->next=newBr;
 	if(brhead->next!=(struct brlst*)NULL){
-		printf("brhead->next->topic %d \n", brhead->next->topic);
+		printf("brhead->next->topic 0x%04x \n", brhead->next->topic);
 	}
 	signal(csm);
-	signal(tbsem);
 	restore(mask);
 	return OK;
 }
 
 void handler1(topic16 topic,uint32 data){
-	printf("- Function handler1() is called with arguments %d and %d\n",topic,data);
+	printf("- Function handler1() is called with topic16 0x%04x and data 0x%02x\n",topic&0xffff,data&0xff);
 }
 
 void handler2(topic16 topic,uint32 data){
-	printf("- Function handler2() is called with arguments %d and %d\n",topic,data);
+	printf("- Function handler2() is called with topic16 0x%04x and data 0x%02x\n",topic&0xffff,data&0xff);
 }
 
 syscall unsubscribeAll(){
@@ -200,38 +198,60 @@ syscall unsubscribeAll(){
 process A(){
 	printf("process A start\n");
 	topic16 topic;
-	if(subscribe(10,&handler1)==SYSERR){
+	topic=0x013F;
+	
+	
+	if(subscribe(topic,&handler1)==SYSERR){
 		printf("fail to subscribe\n");
 	}else{
-		printf("process A subscribe to %d with handler1\n",topic);
+		printf("process A subscribe to 0x%04x with handler1\n",topic);
 	}
-	sleep(10);
-	unsubscribeAll();
+	
+	sleep(20);
+	// unsubscribeAll();
 	return OK;
 }
 process B(){
 	printf("process B start\n");
 	topic16 topic;
 	uint32 data;
-	sleep(1);
-	topic=10;
-	data=77;
-	publish(topic,data);
-	printf("Process B publishs %d to topic %d\n",topic,data);
-	topic=10;
-	data=42;
-	publish(topic,data);
-	printf("Process B publishs %d to topic %d\n",topic,data);
-	topic=7;
-	data=17;
-	publish(topic,data);
-	printf("Process B publishs %d to topic %d\n",topic,data);
-	printf("finish publish\n");
-	sleep(1);
+	
+	topic=0x023F;
+	if(subscribe(topic,&handler2)==SYSERR){
+		printf("fail to subscribe\n");
+	}else{
+		printf("process B subscribe to 0x%04x with handler2\n",topic);
+	}
+	sleep(20);
 	// unsubscribeAll();
 	return OK;
 }
 
+process C(){
+	printf("process C start\n");
+	sleep(1);
+	topic16 topic;
+	uint32 data;
+	
+	topic=0x013F;
+	data=0xFF;
+	printf("Process C publishes data 0x%04x to topic16 0x%04x\n",data,topic);
+	publish(topic,data);
+	return OK;
+}
+
+process D(){
+	printf("process D start\n");
+	sleep(1);
+	topic16 topic;
+	uint32 data;
+	
+	topic=0x003F;
+	data=0x7F;
+	printf("Process D publishes data 0x%04x to topic16 0x%04x\n",data,topic);
+	publish(topic,data);
+	return OK;
+}
 
 
 process Broker(){
@@ -240,19 +260,27 @@ process Broker(){
 	printf("Broker start\n");
 	while(1){
 		wait(csm);
-		if(brhead->next!=(struct brlst *)NULL){
+		// printf("Broker check\n");
+		// if(brhead->next!=(struct brlst *)NULL){
 			brentry=brhead->next;
 			wait(tbsem);
-			subsentry=topictab[brentry->topic].subsHead;
+			// printf("Broker run handler\n");
+			subsentry=topictab[brentry->topic & 0x00FF].subsHead;
 			while(subsentry!=(struct subs *)NULL){
+				if(brentry->topic>>8!=0 && subsentry->group!=brentry->topic>>8){
+					subsentry=subsentry->next;
+					continue;
+				}
 				subsentry->hdlptr(brentry->topic,brentry->data);
 				subsentry=subsentry->next;
 			}
 			signal(tbsem);
 			brhead->next=brentry->next;
 			freemem(brentry,sizeof(struct brlst));
-		}
+		// }
+		// printf("Broker finished\n");
 		signal(prd);
+		yield();
 	}
 	return OK;
 }
@@ -272,6 +300,8 @@ process	main(void)
 	
 	resume(create(A, 4096, 50, "A", 0));
 	resume(create(B, 4096, 50, "B", 0));
+	resume(create(C, 4096, 50, "C", 0));
+	resume(create(D, 4096, 50, "D", 0));
 	resume(create(Broker,4096, 50, "Broker", 0));
 	printf("finished all process\n");
 	return OK;
