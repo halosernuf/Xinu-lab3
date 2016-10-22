@@ -10,7 +10,6 @@ struct tpc
 {
 	struct subs* subsHead;
 	int32 subsCount;
-	// sid32 subsSem;
 };
 //topic subscriber list struct
 struct subs
@@ -25,8 +24,6 @@ sid32 tbsem;
 //broker publish list struct
 struct brlst
 {
-	// void (*hdlptr)(topic16, uint32);
-	// topic16 topic;
 	uint32 data;
 	topic16 topic;
 	struct brlst* next;
