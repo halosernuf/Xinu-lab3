@@ -4,7 +4,6 @@
 
 #define NTP 256
 #define MAXSUB 8
-
 /*--------struct define start--------*/
 //topic table struct
 struct tpc
@@ -17,7 +16,7 @@ struct subs
 {
 	pid32 pid;
 	topic16 group;
-	void (*hdlptr)(topic16, uint32);
+	void (*hdlptr)(topic16, void*, uint32);
 	struct subs* next;
 };
 struct tpc topictab[NTP];
@@ -25,7 +24,8 @@ sid32 tbsem;
 //broker publish list struct
 struct brlst
 {
-	uint32 data;
+	uint32 size;
+	void* data;
 	topic16 topic;
 	struct brlst* next;
 };
@@ -53,7 +53,7 @@ status init_broker(){
 	return OK;
 }
 
-syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
+syscall subscribe(topic16 topic, void (*handler)(topic16, void* ,uint32)){
 	intmask mask;
 	struct tpc* tpcentry;
 	struct subs* subentry;
@@ -137,7 +137,7 @@ syscall unsubscribe(topic16 topic){
 	return OK;
 }
 //publish topic entry to broker
-syscall publish(topic16 topic, uint32 data){
+syscall publish(topic16 topic, void* data, uint32 size){
 	
 	intmask mask;
 	struct brlst* brentry;
@@ -150,7 +150,20 @@ syscall publish(topic16 topic, uint32 data){
 	
 	wait(prd);
 	struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
-	newBr->data=data;
+	if ((int32)newBr == SYSERR) {
+		signal(prd);
+		restore(mask);
+		return SYSERR;
+	}
+	void *newData = getmem(sizeof(data)*size);
+	if ((int32)newData == SYSERR) {
+		signal(prd);
+		restore(mask);
+		return SYSERR;
+	}
+	memcpy(newData,data,sizeof(data)*size);//copy data from stack to heap
+	newBr->data=newData;
+	newBr->size=size;
 	newBr->topic=topic;
 	newBr->next=(struct brlst*)NULL;
 	brentry=brhead;
@@ -166,12 +179,15 @@ syscall publish(topic16 topic, uint32 data){
 	return OK;
 }
 
-void handler1(topic16 topic,uint32 data){
-	printf("- Function handler1() is called with topic16 0x%04x and data 0x%02x\n",topic&0xffff,data&0xff);
+void handler1(topic16 topic,void* data, uint32 size){
+	char *cstData=(char*)data;
+	printf("- Function handler1() is called with topic16 0x%04x and data %s\n",topic&0xffff,cstData);
+	
 }
 
-void handler2(topic16 topic,uint32 data){
-	printf("- Function handler2() is called with topic16 0x%04x and data 0x%02x\n",topic&0xffff,data&0xff);
+void handler2(topic16 topic,void* data, uint32 size){
+	char *cstData=(char*)data;
+	printf("- Function handler2() is called with topic16 0x%04x and data %s\n",topic&0xffff,cstData);
 }
 
 syscall unsubscribeAll(){
@@ -186,8 +202,6 @@ process A(){
 	printf("process A start\n");
 	topic16 topic;
 	topic=0x013F;
-	
-	
 	if(subscribe(topic,&handler1)==SYSERR){
 		printf("fail to subscribe\n");
 	}else{
@@ -201,14 +215,13 @@ process A(){
 process B(){
 	printf("process B start\n");
 	topic16 topic;
-	uint32 data;
-	
 	topic=0x023F;
 	if(subscribe(topic,&handler2)==SYSERR){
 		printf("fail to subscribe\n");
 	}else{
 		printf("process B subscribe to 0x%04x with handler2\n",topic);
 	}
+	
 	sleep(20);
 	unsubscribeAll();
 	return OK;
@@ -218,12 +231,12 @@ process C(){
 	printf("process C start\n");
 	sleep(1);
 	topic16 topic;
-	uint32 data;
-	
+	char data[15]="hello world";
+	uint32 size = sizeof(data)/sizeof(data[0]);
 	topic=0x013F;
-	data=0xFF;
-	printf("Process C publishes data 0x%04x to topic16 0x%04x\n",data,topic);
-	publish(topic,data);
+	// data=0xFF;
+	printf("Process C publishes data %s to topic16 0x%04x\n",data,topic);
+	publish(topic,data,size);
 	return OK;
 }
 
@@ -231,12 +244,11 @@ process D(){
 	printf("process D start\n");
 	sleep(1);
 	topic16 topic;
-	uint32 data;
-	
+	char data[15]="go gators!";
+	uint32 size = sizeof(data)/sizeof(data[0]);
 	topic=0x003F;
-	data=0x7F;
-	printf("Process D publishes data 0x%04x to topic16 0x%04x\n",data,topic);
-	publish(topic,data);
+	printf("Process D publishes data %s to topic16 0x%04x\n",data,topic);
+	publish(topic,data,size);
 	return OK;
 }
 
@@ -255,7 +267,7 @@ process Broker(){
 				subsentry=subsentry->next;
 				continue;
 			}
-			subsentry->hdlptr(brentry->topic,brentry->data);
+			subsentry->hdlptr(brentry->topic,brentry->data,brentry->size);
 			subsentry=subsentry->next;
 		}
 		signal(tbsem);
