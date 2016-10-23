@@ -4,6 +4,7 @@
 
 #define NTP 256
 #define MAXSUB 8
+
 /*--------struct define start--------*/
 //topic table struct
 struct tpc
@@ -64,7 +65,6 @@ syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
 	}
 	/* return if topic subscriber is over 8*/
 	tpcentry = &topictab[topic&0x00FF];
-	// wait(tpcentry->subsSem);
 	wait(tbsem);
 	if(tpcentry->subsCount>=MAXSUB){
 		signal(tbsem);
@@ -73,7 +73,6 @@ syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
 	}
 	/* subscribe currpid to topic */
 	subentry = tpcentry->subsHead;
-	// struct subs *newSub = (struct subs *)malloc(sizeof(struct subs));
 	struct subs *newSub = (struct subs *)getmem(sizeof(struct subs));
 	/* memory full*/
 	if ((int32)newSub == SYSERR) {
@@ -86,7 +85,6 @@ syscall subscribe(topic16 topic, void (*handler)(topic16, uint32)){
 	newSub->next=subentry;
 	newSub->group=topic>>8;
 	tpcentry->subsHead=newSub;
-	// signal(tpcentry->subsSem);
 	signal(tbsem);
 	restore(mask);
 	return OK;
@@ -102,7 +100,6 @@ syscall unsubscribe(topic16 topic){
 		return SYSERR;
 	}
 	tpcentry = &topictab[topic&0x00ff];
-	// wait(tpcentry->subsSem);
 	wait(tbsem);
 	subentry=tpcentry->subsHead;
 	/*traverse down the linkedList to get sub of currpid*/
@@ -111,7 +108,6 @@ syscall unsubscribe(topic16 topic){
 	}
 	/*currpid not in subs*/
 	if(subentry==(struct subs*)NULL){
-		// signal(tpcentry->subsSem);
 		signal(tbsem);
 		restore(mask);
 		return SYSERR;
@@ -119,8 +115,6 @@ syscall unsubscribe(topic16 topic){
 	/*delete subs*/
 	if(subentry->next==(struct subs*)NULL){
 		if(freemem(subentry,sizeof(struct subs))==SYSERR){
-		 // if(free(subentry,sizeof(struct subs))==SYSERR){
-			// signal(tpcentry->subsSem);
 			signal(tbsem);
 			restore(mask);
 			return SYSERR;
@@ -132,7 +126,6 @@ syscall unsubscribe(topic16 topic){
 		tmp=subentry->next;
 		subentry->next=subentry->next->next;
 		if(freemem((char *)tmp,sizeof(struct subs))==SYSERR){
-			// signal(tpcentry->subsSem);
 			signal(tbsem);
 			restore(mask);
 			return SYSERR;
@@ -147,8 +140,6 @@ syscall unsubscribe(topic16 topic){
 syscall publish(topic16 topic, uint32 data){
 	
 	intmask mask;
-	// struct tpc* tpcentry;
-	// struct subs* subentry;
 	struct brlst* brentry;
 	mask=disable();
 	/* return if wrong topic id*/
@@ -158,7 +149,6 @@ syscall publish(topic16 topic, uint32 data){
 	}
 	
 	wait(prd);
-	// printf("copy data to broker blk\n");
 	struct brlst *newBr = (struct brlst *)getmem(sizeof(struct brlst));
 	newBr->data=data;
 	newBr->topic=topic;
@@ -205,7 +195,7 @@ process A(){
 	}
 	
 	sleep(20);
-	// unsubscribeAll();
+	unsubscribeAll();
 	return OK;
 }
 process B(){
@@ -220,7 +210,7 @@ process B(){
 		printf("process B subscribe to 0x%04x with handler2\n",topic);
 	}
 	sleep(20);
-	// unsubscribeAll();
+	unsubscribeAll();
 	return OK;
 }
 
@@ -257,25 +247,20 @@ process Broker(){
 	printf("Broker start\n");
 	while(1){
 		wait(csm);
-		// printf("Broker check\n");
-		// if(brhead->next!=(struct brlst *)NULL){
-			brentry=brhead->next;
-			wait(tbsem);
-			// printf("Broker run handler\n");
-			subsentry=topictab[brentry->topic & 0x00FF].subsHead;
-			while(subsentry!=(struct subs *)NULL){
-				if(brentry->topic>>8!=0 && subsentry->group!=brentry->topic>>8){
-					subsentry=subsentry->next;
-					continue;
-				}
-				subsentry->hdlptr(brentry->topic,brentry->data);
+		brentry=brhead->next;
+		wait(tbsem);
+		subsentry=topictab[brentry->topic & 0x00FF].subsHead;
+		while(subsentry!=(struct subs *)NULL){
+			if(brentry->topic>>8!=0 && subsentry->group!=brentry->topic>>8){
 				subsentry=subsentry->next;
+				continue;
 			}
-			signal(tbsem);
-			brhead->next=brentry->next;
-			freemem(brentry,sizeof(struct brlst));
-		// }
-		// printf("Broker finished\n");
+			subsentry->hdlptr(brentry->topic,brentry->data);
+			subsentry=subsentry->next;
+		}
+		signal(tbsem);
+		brhead->next=brentry->next;
+		freemem(brentry,sizeof(struct brlst));
 		signal(prd);
 		yield();
 	}
